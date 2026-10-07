@@ -8,7 +8,7 @@ The current prototype demonstrates an **Asymtek S932 / DJ-2200 / BFS** incident 
 
 > **Prototype status:** The replay, images and experiments are illustrative. FlowPilot is not validated for production diagnosis, cannot control equipment, and does not replace approved maintenance procedures or engineering judgment.
 
-[Quick start](#quick-start) · [Demo walkthrough](#demo-walkthrough) · [Architecture](#system-architecture) · [Development](#development) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Demo walkthrough](#demo-walkthrough) · [Architecture](#system-architecture) · [Development](#development)
 
 ## Why FlowPilot
 
@@ -78,8 +78,6 @@ If the PowerShell npm launcher fails, use `npm.cmd` in place of `npm`.
 
 Simulation outputs stay distinct from observed evidence. Exporting a report or email does not send a message. The mock communication flow lets you explore delivery states without sending real mail.
 
-For a detailed walkthrough, see the [incident workspace guide](docs/S932_INCIDENT_WORKSPACE.md) and [demo script](docs/S932_DEMO_SCRIPT.md).
-
 ## System architecture
 
 ```mermaid
@@ -117,7 +115,8 @@ flowchart TB
         gemini["Gemini - structured reasoning and File Search"]
         jev["Jev - bounded decisions via TypeSafe or OpenRouter"]
         voice["ElevenLabs - voice transcription"]
-        mail["Microsoft Graph - Outlook drafts / configured SMTP"]
+        outlook["Microsoft Graph - Outlook drafts"]
+        smtp["SMTP - approved email sending"]
     end
 
     technician --> web
@@ -134,7 +133,8 @@ flowchart TB
     investigation -.-> jev
     api -.->|"short-lived transcription token"| voice
     web -.->|"audio stream"| voice
-    handoff -.-> mail
+    handoff -.-> outlook
+    handoff -.-> smtp
 ```
 
 Solid arrows show the local application path; dashed arrows show generated contracts or optional integrations. Background workers run inside the API process and persist job state in SQLite. Incident originals are stored in the database; the separate legacy photo pipeline stores its model and assessments under `.cache/vision/`.
@@ -156,16 +156,16 @@ The default investigation uses deterministic rules and explicit confirmation gat
 
 Copy `.env.example` to the ignored root `.env`, configure only the integrations you need, and restart using `npm run dev`. Keep keys on the backend; never put secrets in `VITE_*` variables.
 
-| Integration | Configuration and guide |
+| Integration | Configuration |
 | --- | --- |
-| Gemini reasoning | Set `GEMINI_API_KEY` and `FLOWPILOT_REASONING_ENABLED=true`. See the [incident integration guide](docs/S932_INCIDENT_WORKSPACE.md#optional-integrations). |
-| Reference retrieval | Index the reference and enable `FLOWPILOT_INCIDENT_RAG_ENABLED`. See [investigation RAG](docs/INVESTIGATION_RAG.md) for upload policy, citations and source limits. |
-| Jev decisions | Enable `FLOWPILOT_INCIDENT_JEV_ENABLED` and configure TypeSafe or OpenRouter credentials. See the [incident integration guide](docs/S932_INCIDENT_WORKSPACE.md#optional-integrations). |
-| Voice input | Configure `ELEVENLABS_API_KEY` and enable `FLOWPILOT_INCIDENT_VOICE_ENABLED`. See [investigation voice](docs/INVESTIGATION_VOICE.md). Hands-free replies use browser speech synthesis. |
-| Outlook drafts | Configure a Microsoft Entra application and backend credentials. See [Outlook setup](docs/OUTLOOK.md). The connector saves a real draft for review in Outlook; it does not send it. |
-| SMTP sending | Requires configured credentials, recipient allowlisting, send permission and approval of the current snapshot. See the [communication guide](docs/S932_INCIDENT_WORKSPACE.md#optional-integrations). |
+| Gemini reasoning | Set `GEMINI_API_KEY` and `FLOWPILOT_REASONING_ENABLED=true`. |
+| Reference retrieval | Configure Gemini reasoning, then run `npm run rag:index -- --allow-reference-upload` under the default `synthetic_only` policy. This explicitly allows the bundled reference upload to Gemini File Search. Set `FLOWPILOT_INCIDENT_RAG_ENABLED=true` and restart. |
+| Jev decisions | Enable `FLOWPILOT_INCIDENT_JEV_ENABLED` and configure TypeSafe or OpenRouter credentials. |
+| Voice input | Configure `ELEVENLABS_API_KEY` and enable `FLOWPILOT_INCIDENT_VOICE_ENABLED`. Hands-free replies use browser speech synthesis. |
+| Outlook drafts | Configure a Microsoft Entra Web application with delegated `User.Read` and `Mail.ReadWrite` permissions, then set the `FLOWPILOT_OUTLOOK_*` credentials and redirect URI. Open the app at `http://localhost:5173` to match the default callback host. The connector saves a real draft for review in Outlook; it does not send it. |
+| SMTP sending | Requires configured credentials, recipient allowlisting, send permission and approval of the current snapshot. |
 
-The external-data policy defaults to `synthetic_only`. See `.env.example` for available settings and the incident guide for configured access permissions. Demo access is intended for local demonstrations; a pilot needs configured authentication and an approved data policy.
+The external-data policy defaults to `synthetic_only`. Available settings are listed in `.env.example`. Demo access is intended for local demonstrations; a pilot needs configured authentication and an approved data policy.
 
 ## Development
 
@@ -182,7 +182,6 @@ fixtures/                 Replay evidence, sample logs and test scenarios
 scripts/                  Contract generation, indexing and evaluation tools
 src/ingestion/            JavaScript reference log parser
 test/                     Node tests and browser journeys
-docs/                     Product scope, integration guides and validation records
 ```
 
 ### Useful commands
@@ -205,7 +204,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-An installed Chrome is also supported with `PLAYWRIGHT_CHANNEL=chrome npm run test:e2e` on POSIX shells. See the [development guide](docs/DEVELOPMENT.md) for contracts, module boundaries and test setup.
+An installed Chrome is also supported with `PLAYWRIGHT_CHANNEL=chrome npm run test:e2e` on POSIX shells.
 
 When contributing, describe the incident or workflow your change improves, keep provider behavior optional, and regenerate contracts when API schemas change. Include the relevant validation results in your pull request. Track bugs and proposals in [GitHub Issues](https://github.com/JiaLe331/FlowPilot/issues).
 
@@ -220,7 +219,7 @@ When contributing, describe the incident or workflow your change improves, keep 
 | `/prototype` | Offline version 2 storyboard. |
 | `/log-preview` | Standalone event-log viewer. |
 
-For legacy photo inference, run `npm run vision:setup` once to download the pretrained backbone. Inference then runs locally on CPU. See [photo inspection](docs/PHOTO_INSPECTION.md) for provenance and model limits. Older epoxy cases remain read-only.
+For legacy photo inference, run `npm run vision:setup` once to download the pretrained backbone. Inference then runs locally on CPU. Older epoxy cases remain read-only.
 
 ## Scope and limitations
 
@@ -229,21 +228,6 @@ For legacy photo inference, run `npm run vision:setup` once to download the pret
 - Manufacturer-approved procedures, validated equipment export mapping, physical experiments and supervised real-machine outcome studies remain pending.
 - Reviewed historical experience and retrieved reference passages support investigation; neither substitutes for confirmed current evidence. The bundled S932 reference is an unverified secondary summary.
 - The prototype targets a local, single-process demonstration. Outlook connections are held in API memory and require reconnection after restart; a multi-worker deployment needs shared session storage.
-
-See the [implementation audit](docs/S932_IMPLEMENTATION_AUDIT.md), [mock evaluation](docs/S932_MOCK_EVALUATION.md) and [expert review](docs/EXPERT_REVIEW.md) for coverage and validation boundaries.
-
-## Documentation
-
-| Start here | Details |
-| --- | --- |
-| [Incident workspace guide](docs/S932_INCIDENT_WORKSPACE.md) | Feature pages, replay, API routes and integration settings. |
-| [Current product requirements](docs/S932_AI_Troubleshooting_PRD.md) | S932 prototype, pilot and research scope. |
-| [Development guide](docs/DEVELOPMENT.md) | Setup, commands, contracts and verification. |
-| [Gateway and evidence ingestion](docs/S932_GATEWAY.md) | Read-only export adapter, checkpoints and mock fixtures. |
-| [Event-log ingestion](docs/LOG_INGESTION.md) | Parser contract, provenance, warnings and production follow-ups. |
-| [Learning Database](docs/DATABASE_LEARNING_PLAN.md) | Reviewed experience lifecycle and knowledge graph. |
-| [Investigation RAG](docs/INVESTIGATION_RAG.md) | Reference indexing, retrieval and citation validation. |
-| [Milestone log](docs/MILESTONES.md) | Development history, verification and handoffs. |
 
 ## License
 
